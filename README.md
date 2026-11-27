@@ -39,14 +39,21 @@ Her şey **butonlarla** yapılır — komut ezberlemek gerekmez. `/start` yaz, m
 ```
 🛡 ELDORADO SATICI PANELİ
 ─────────────────
-[📊 Panel]      [🛒 Siparişler]
-[🏷 Teklifler]  [⚙️ Ayarlar]
-[❓ Yardım]
+[📊 Panel]            [🛒 Siparişler]
+[🏷 Teklifler]        [🔔 Bildirimler]
+[⭐ Değerlendirmeler] [🚀 Boosting]
+[⚙️ Ayarlar]          [❓ Yardım]
 ```
 
-- **Panel** — puan, bugünün cirosu, sipariş durum dağılımı, bekleyen tutar, izleme durumu.
-- **Siparişler** — sayfalı liste; her siparişe dokununca detay kartı ve **✅ Teslim Et** butonu.
-- **Teklifler** — sayfalı liste; her teklifte **💰 Fiyat**, **📦 Stok**, **⏸ Duraklat**, **🤖 Oto Metin**.
+- **Panel** — puan, bugünün sipariş/cirosu, sipariş durum dağılımı, bekleyen tutar, izleme durumu.
+- **Siparişler** — Tümü / Bekleyen / İtirazlı / Tamamlanan filtreleri, sayfalama.
+  Sipariş detayında **✅ Teslim Et**, **⏱ Süre Uzat** (24/48/72 saat), **❌ İptal** (sebep seçmeli).
+- **Teklifler** — üç tip ayrı ayrı yönetilir: 📦 Ürün, 👤 Hesap, 🎁 Hazır.
+  Her teklifte **💰 Fiyat**, **📦 Stok**, **⏸ Duraklat / ▶️ Devam**, **🤖 Oto Metin**, **🗑 Sil**;
+  ayrıca tipe göre **Tümünü Duraklat** ve ürün araması.
+- **Bildirimler** — liste ve **Tümünü Okundu**.
+- **Değerlendirmeler** — puan özeti ve son yorumlar.
+- **Boosting** — abonelik durumları.
 - **Ayarlar** — bildirim aç/kapat, otomatik teslimat aç/kapat, test bildirimi.
 
 Yeni sipariş geldiğinde butonlu bir kart düşer:
@@ -71,10 +78,9 @@ Durum: Teslim edildi
 | `/bekleyen` | Teslim/itiraz bekleyen siparişler |
 | `/teklifler` | Teklifler (sayfalı) |
 | `/ayarlar` | Bildirim / otomatik teslimat |
-| `/fiyat <teklifNo> <tutar>` | Fiyat değiştir |
-| `/stok <teklifNo> <adet>` | Adet değiştir |
-| `/teslim <siparişNo> <metin>` | Siparişi teslim et |
-| `/izle on\|off` · `/oto on\|off` | Hızlı aç/kapat |
+| `/bildirimler` | Bildirimler |
+| `/yorumlar` | Değerlendirmeler |
+| `/izle on\|off` · `/oto on\|off` | Bildirim / oto teslim aç-kapat |
 | `/iptal` | Yarım kalan girişi iptal et |
 
 Teklif/sipariş numarası olarak listede görünen kısa kodun ilk birkaç karakteri yeterlidir.

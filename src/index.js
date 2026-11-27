@@ -69,10 +69,12 @@ async function main() {
     .api('setMyCommands', {
       commands: [
         { command: 'panel', description: 'Gösterge paneli' },
-        { command: 'siparisler', description: 'Son siparişler' },
+        { command: 'siparisler', description: 'Siparişler' },
         { command: 'bekleyen', description: 'İşlem bekleyen siparişler' },
-        { command: 'teklifler', description: 'Teklifler' },
-        { command: 'ayarlar', description: 'Bildirim ve otomatik teslimat' },
+        { command: 'teklifler', description: 'Teklif yönetimi' },
+        { command: 'bildirimler', description: 'Bildirimler' },
+        { command: 'yorumlar', description: 'Değerlendirmeler' },
+        { command: 'ayarlar', description: 'Ayarlar' },
         { command: 'yardim', description: 'Yardım' },
       ],
     })
@@ -104,7 +106,7 @@ async function main() {
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-  await tg.start({ onMessage: bot.handleMessage });
+  await tg.start({ onMessage: bot.handleMessage, onCallback: bot.handleCallback });
 }
 
 main().catch((err) => {

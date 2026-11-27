@@ -267,4 +267,92 @@ export class Eldorado {
   async resumeOffer(offerId) {
     return this.request('POST', `/api/v1/item-management/me/offers/${offerId}/resume`);
   }
+
+  // ---------------------------------------------------------------- siparis islemleri
+
+  /** Siparisi iptal eder. Govde sekli denenerek bulunur. */
+  async cancelOrder(orderId, reason) {
+    const shapes = [{ cancelationReason: reason }, { reason }, { cancelReason: reason }];
+    let lastErr = null;
+    for (const body of shapes) {
+      try {
+        return await this.request('POST', `/api/v1/orders/me/${orderId}/cancel`, { body, retries: 0 });
+      } catch (err) {
+        lastErr = err;
+        if (err.status !== 400) break;
+      }
+    }
+    throw lastErr;
+  }
+
+  /** Teslim suresini uzatir. */
+  async extendDelivery(orderId, hours) {
+    const shapes = [
+      { extendedDeliveryTime: `${hours}h` },
+      { deliveryTime: `${hours}h` },
+      { hours },
+      { extensionHours: hours },
+    ];
+    let lastErr = null;
+    for (const body of shapes) {
+      try {
+        return await this.request('POST', `/api/v1/orders/me/${orderId}/extend-delivery-time`, { body, retries: 0 });
+      } catch (err) {
+        lastErr = err;
+        if (err.status !== 400) break;
+      }
+    }
+    throw lastErr;
+  }
+
+  async deliveryDetails(orderId, detailId) {
+    return this.request('GET', `/api/v1/orders/me/${orderId}/delivery-details/${detailId}`);
+  }
+
+  async correctionDeliveryDetails(orderId, body) {
+    return this.request('POST', `/api/v1/orders/me/${orderId}/delivery-details/correction`, { body });
+  }
+
+  // ---------------------------------------------------------------- degerlendirmeler
+
+  async reviews({ pageIndex = 1, pageSize = 10 } = {}) {
+    const data = await this.request('GET', '/api/v1/orders/me/reviews', { query: { pageIndex, pageSize } });
+    return {
+      info: data?.userOrderInfo ?? null,
+      reviews: Array.isArray(data?.reviews) ? data.reviews : Array.isArray(data?.results) ? data.results : [],
+    };
+  }
+
+  // ---------------------------------------------------------------- bildirimler (yazma)
+
+  async markAllNotificationsRead() {
+    return this.request('PUT', '/api/notifications/me/markAllAsRead');
+  }
+
+  async markNotificationRead(id) {
+    return this.request('PUT', `/api/notifications/me/${id}/markAsRead`);
+  }
+
+  // ---------------------------------------------------------------- diger
+
+  async restrictions() {
+    return this.request('GET', '/api/offerUser/me/restrictions');
+  }
+
+  async switchOnline() {
+    return this.request('PUT', '/api/offerUser/me/switchOnline');
+  }
+
+  async switchOffline() {
+    return this.request('PUT', '/api/offerUser/me/switchOffline');
+  }
+
+  async boostingSubscriptions() {
+    const data = await this.request('GET', '/api/boostingOffers/me/boostingSubscriptions');
+    return Array.isArray(data) ? data : [];
+  }
+
+  async generateInvoice() {
+    return this.request('GET', '/api/v1/orders/me/invoice/generate');
+  }
 }
