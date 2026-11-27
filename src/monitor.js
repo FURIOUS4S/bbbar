@@ -1,5 +1,6 @@
 // Siparis izleyici: yeni siparisi yakalar, Telegram'a bildirir, gerekirse teslim eder.
-import { formatOrder, orderTitle, shortId } from './format.js';
+import { orderTitle, shortId } from './format.js';
+import { orderAlert } from './ui.js';
 
 const PENDING_STATES = new Set(['Paid']);
 
@@ -71,7 +72,8 @@ export class Monitor {
 
         if (!chatId) continue; // henuz /start yapilmamis
         try {
-          await this.notify(chatId, formatOrder(order, { header: '🛒 <b>Yeni sipariş!</b>' }) + (autoNote ? `\n\n${autoNote}` : ''));
+          const view = orderAlert(order, { autoNote });
+          await this.notify(chatId, view.text, { keyboard: view.keyboard });
         } catch (err) {
           this.log('[monitor] bildirim gonderilemedi:', err.message);
         }

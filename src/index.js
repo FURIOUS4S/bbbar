@@ -53,6 +53,8 @@ async function main() {
   }
   if (envBool('AUTO_DELIVER', false)) store.set('autoDeliver', true);
 
+  store.set('pollSeconds', Math.max(20, pollSeconds));
+
   const api = new Eldorado({ clientId, clientSecret, log: (...a) => log('[api]', ...a) });
   const tg = new Telegram(botToken, { log: (...a) => log(...a) });
 
@@ -63,13 +65,26 @@ async function main() {
   const me = await tg.me();
   log(`✅ Telegram: @${me.username}`);
 
+  await tg
+    .api('setMyCommands', {
+      commands: [
+        { command: 'panel', description: 'Gösterge paneli' },
+        { command: 'siparisler', description: 'Son siparişler' },
+        { command: 'bekleyen', description: 'İşlem bekleyen siparişler' },
+        { command: 'teklifler', description: 'Teklifler' },
+        { command: 'ayarlar', description: 'Bildirim ve otomatik teslimat' },
+        { command: 'yardim', description: 'Yardım' },
+      ],
+    })
+    .catch(() => null);
+
   const notify = (chatId, text, opts) => tg.send(chatId, text, opts);
   const monitor = new Monitor({ api, store, notify, log, pollSeconds });
   const bot = createBot({ api, store, tg, monitor, log });
 
   if (store.get('chatId')) {
     await tg
-      .send(store.get('chatId'), '🟢 <b>Bot başlatıldı.</b> Siparişler izleniyor. /yardim yazabilirsin.')
+      .send(store.get('chatId'), '🟢 <b>Bot başlatıldı.</b>\nSiparişler izleniyor. /panel ile panele bakabilirsin.')
       .catch(() => null);
   } else {
     log('ℹ️  Henüz chat id yok. Telegram\'da bota /start yaz, otomatik kaydedilecek.');

@@ -1,33 +1,27 @@
-// Telegram komutlari.
+// Komut + buton yonlendiricisi ve adim adim giris akislari.
 import { esc } from './telegram.js';
-import { formatOffer, formatOrder, money, shortId, stateLabel, when } from './format.js';
+import * as ui from './ui.js';
+import { money, shortId } from './format.js';
 
-const HELP = [
-  '🤖 <b>Eldorado Satıcı Botu</b>',
-  '',
-  '<b>Bilgi</b>',
-  '/durum — bağlantı, puan, bekleyen sipariş özeti',
-  '/ozet — sipariş durum sayıları',
-  '/siparisler — son 10 sipariş',
-  '/bekleyen — teslim/İtiraz bekleyen siparişler',
-  '/teklifler [arama] — tekliflerini listele',
-  '',
-  '<b>Yönetim</b>',
-  '/fiyat &lt;teklifNo&gt; &lt;tutar&gt; — fiyat değiştir',
-  '/stok &lt;teklifNo&gt; &lt;adet&gt; — adet değiştir',
-  '/duraklat &lt;teklifNo&gt; • /devam &lt;teklifNo&gt;',
-  '/teslim &lt;siparişNo&gt; &lt;metin&gt; — siparişi teslim et',
-  '',
-  '<b>Ayarlar</b>',
-  '/izle on|off — yeni sipariş bildirimi',
-  '/oto on|off — otomatik teslimat',
-  '/oto metin &lt;teklifNo&gt; &lt;metin&gt; — teklif için otomatik teslim metni',
-  '/oto liste — kayıtlı metinler',
-  '',
-  'İpucu: teklif/sipariş numarası olarak listede görünen kısa kodun ilk birkaç harfi yeter.',
-].join('\n');
+const PAGE = ui.ORDERS_PAGE_SIZE;
+const INPUT_TIMEOUT_MS = 5 * 60 * 1000;
 
 export function createBot({ api, store, tg, monitor, log = console.log }) {
+  /** chatId -> { type, id, at } — butonla baslatilan adim adim giris */
+  const inputs = new Map();
+
+  const isOld = (entry) => !entry || Date.now() - entry.at > INPUT_TIMEOUT_MS;
+
+  function setInput(chatId, entry) {
+    inputs.set(chatId, { ...entry, at: Date.now() });
+  }
+
+  function clearInput(chatId) {
+    inputs.delete(chatId);
+  }
+
+  // ---------------------------------------------------------------- gonderim
+
   async function send(chatId, text, opts) {
     try {
       return await tg.send(chatId, text, opts);
@@ -37,239 +31,346 @@ export function createBot({ api, store, tg, monitor, log = console.log }) {
     }
   }
 
-  async function resolveOrder(ref) {
-    const needle = String(ref || '').toLowerCase();
-    if (!needle) return null;
+  async function render(chatId, view, { messageId = null } = {}) {
+    if (messageId) {
+      try {
+        await tg.edit(chatId, messageId, view.text, { keyboard: view.keyboard });
+        return;
+      } catch (err) {
+        // "message is not modified" gibi durumlar sorun degil; yeni mesaj gonder.
+        if (!/not modified/i.test(err.message)) log('[bot] duzenleme basarisiz:', err.message);
+        if (/not modified/i.test(err.message)) return;
+      }
+    }
+    return send(chatId, view.text, { keyboard: view.keyboard });
+  }
+
+  // ---------------------------------------------------------------- veri
+
+  async function findOrder(ref) {
+    const direct = await api.getOrder(ref).catch(() => null);
+    if (direct?.id) return direct;
     const orders = await api.listOrders({ pageIndex: 1, pageSize: 50 });
+    const needle = String(ref).toLowerCase();
     return orders.find((o) => String(o.id).toLowerCase().startsWith(needle)) || null;
   }
 
-  async function resolveOffer(ref) {
-    const needle = String(ref || '').toLowerCase();
-    if (!needle) return null;
-    const { offers } = await api.listOffers({ pageIndex: 1, pageSize: 50 });
-    return (
-      offers.find((o) => String(o.id).toLowerCase().startsWith(needle)) ||
-      offers.find((o) => String(o.offerTitle ?? '').toLowerCase().includes(needle)) ||
-      null
-    );
+  async function findOffer(ref) {
+    const needle = String(ref).toLowerCase();
+    for (let page = 1; page <= 6; page += 1) {
+      const { offers } = await api.listOffers({ pageIndex: page, pageSize: 50 });
+      if (!offers.length) break;
+      const hit = offers.find((o) => String(o.id).toLowerCase().startsWith(needle));
+      if (hit) return hit;
+      if (offers.length < 50) break;
+    }
+    return null;
   }
 
-  async function cmdDurum(chatId) {
-    const [overview, states, pending, unread] = await Promise.all([
+  const localDay = (value) => {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '';
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
+  async function dashboardView() {
+    const [overview, states, pending, unread, recent] = await Promise.all([
       api.overview().catch(() => null),
       api.statesCount().catch(() => null),
       api.pendingOrdersSum().catch(() => null),
       api.unreadCount().catch(() => null),
+      api.listOrders({ pageIndex: 1, pageSize: 50 }).catch(() => []),
     ]);
-    const lines = ['📊 <b>Durum</b>', ''];
-    if (overview) {
-      lines.push(`Puan: <b>${Number(overview.reviewScore ?? 0).toFixed(2)}</b> (${overview.ratingCount ?? 0} değerlendirme)`);
-    }
-    if (states) {
-      lines.push(`Teslim bekleyen: <b>${states.paid ?? 0}</b>`);
-      lines.push(`İtirazlı: <b>${states.disputed ?? 0}</b>`);
-      lines.push(`Teslim edilmiş: ${states.delivered ?? 0} • Tamamlanan: ${states.completed ?? 0}`);
-    }
-    if (pending) lines.push(`Bekleyen sipariş tutarı: <b>${money(pending)}</b>`);
-    if (unread != null) lines.push(`Okunmamış bildirim: ${unread}`);
-    lines.push('', `İzleme: ${store.get('monitor') ? '✅ açık' : '⛔ kapalı'}`);
-    lines.push(`Otomatik teslimat: ${store.get('autoDeliver') ? '✅ açık' : '⛔ kapalı'}`);
-    const last = store.get('lastOrderAt');
-    lines.push(`Son yakalanan sipariş: ${last ? when(last) : '-'}`);
-    await send(chatId, lines.join('\n'));
+    const todayKey = localDay(new Date());
+    const todays = recent.filter((o) => localDay(o.createdDate ?? o.state?.createdDate) === todayKey);
+    const today = {
+      count: todays.length,
+      revenue: todays.reduce((sum, o) => sum + Number(o.totalPrice?.amount ?? 0), 0),
+    };
+    return ui.dashboard({ overview, states, pending, unread, store, today });
   }
 
-  async function cmdOzet(chatId) {
-    const states = await api.statesCount();
-    const rows = Object.entries(states || {}).map(([k, v]) => `• ${esc(k)}: <b>${esc(v)}</b>`);
-    await send(chatId, ['📦 <b>Sipariş durumları</b>', '', ...rows].join('\n'));
+  async function ordersView(page) {
+    const orders = await api.listOrders({ pageIndex: page + 1, pageSize: PAGE });
+    return ui.ordersList(orders, page, orders.length === PAGE);
   }
 
-  async function cmdSiparisler(chatId) {
-    const orders = await api.listOrders({ pageIndex: 1, pageSize: 10 });
-    if (!orders.length) return send(chatId, 'Sipariş bulunamadı.');
-    const blocks = orders.map((o) => formatOrder(o, { header: '—' }).replace(/^—\n\n/, ''));
-    await send(chatId, ['🧾 <b>Son siparişler</b>', '', ...blocks.map((b) => `<blockquote>${b}</blockquote>`)].join('\n'));
+  async function offersView(page) {
+    const { offers, recordCount, totalPages } = await api.listOffers({ pageIndex: page + 1, pageSize: PAGE });
+    const total = recordCount || offers.length;
+    const clampedPage = Math.min(page, Math.max(0, (totalPages || 1) - 1));
+    return ui.offersList(offers, clampedPage, total);
   }
 
-  async function cmdBekleyen(chatId) {
+  async function pendingView() {
     const orders = await api.listOrders({ pageIndex: 1, pageSize: 50 });
-    const waiting = orders.filter((o) => ['Paid', 'Disputed'].includes(o.state?.state));
-    if (!waiting.length) return send(chatId, '✅ Bekleyen sipariş yok.');
-    const lines = ['⏳ <b>İşlem bekleyen siparişler</b>', ''];
-    for (const o of waiting) {
-      lines.push(`• <b>${esc(o.orderOfferDetails?.offerTitle ?? 'Sipariş')}</b>`);
-      lines.push(`  ${money(o.totalPrice)} • ${esc(stateLabel(o))} • <code>${esc(shortId(o.id))}</code>`);
+    return ui.pendingList(orders.filter((o) => ['Paid', 'Disputed'].includes(o.state?.state)));
+  }
+
+  async function orderView(ref) {
+    const order = await findOrder(ref);
+    if (!order) return { text: `❌ Sipariş bulunamadı: <code>${esc(ref)}</code>`, keyboard: [[{ text: '◀️ Siparişler', callback_data: 'ord:list:0' }]] };
+    return ui.orderDetail(order);
+  }
+
+  async function offerView(ref) {
+    const offer = await findOffer(ref);
+    if (!offer) return { text: `❌ Teklif bulunamadı: <code>${esc(ref)}</code>`, keyboard: [[{ text: '◀️ Teklifler', callback_data: 'off:list:0' }]] };
+    const autoText = store.get('autoDeliveryTexts')?.[offer.id];
+    return ui.offerDetail(offer, { autoText });
+  }
+
+  // ---------------------------------------------------------------- giris akislari
+
+  const PROMPTS = {
+    price: (o) => `💰 <b>${esc(o?.offerTitle ?? 'Teklif')}</b>\n\nYeni fiyatı USD olarak yaz.\nÖrnek: <code>1.25</code>\n\n<i>İptal için /iptal</i>`,
+    qty: (o) => `📦 <b>${esc(o?.offerTitle ?? 'Teklif')}</b>\n\nYeni adet sayısını yaz.\nÖrnek: <code>25</code>\n\n<i>İptal için /iptal</i>`,
+    autoText: (o) => `🤖 <b>${esc(o?.offerTitle ?? 'Teklif')}</b>\n\nBu teklif için otomatik teslim metnini yaz.\nSipariş "Paid" durumunda geldiğinde bu metinle teslim edilir.\n\n<i>İptal için /iptal</i>`,
+    deliver: (o) => `✅ <b>${esc(o?.orderOfferDetails?.offerTitle ?? 'Sipariş')}</b>\n\nAlıcıya gönderilecek teslim metnini yaz.\n\n<i>İptal için /iptal</i>`,
+  };
+
+  async function askInput(chatId, type, ref, { messageId = null } = {}) {
+    const isOrder = type === 'deliver';
+    const item = isOrder ? await findOrder(ref) : await findOffer(ref);
+    if (!item) {
+      return render(chatId, { text: `❌ Kayıt bulunamadı: <code>${esc(ref)}</code>`, keyboard: [[{ text: '◀️ Menü', callback_data: 'dash:open' }]] }, { messageId });
     }
-    await send(chatId, lines.join('\n'));
+    setInput(chatId, { type, id: item.id });
+    await send(chatId, PROMPTS[type](item));
+    return null;
   }
 
-  async function cmdTeklifler(chatId, term) {
-    let offers;
-    let total;
-    if (term) {
-      offers = await api.searchOffers(term);
-      const page = offers.length ? { offers } : await api.listOffers({ pageIndex: 1, pageSize: 50 });
-      offers = page.offers ?? [];
-      offers = offers.filter((o) => String(o.offerTitle ?? '').toLowerCase().includes(term.toLowerCase()));
-      total = offers.length;
-    } else {
-      const page = await api.listOffers({ pageIndex: 1, pageSize: 15 });
-      offers = page.offers;
-      total = page.recordCount;
+  async function handleInput(chatId, text) {
+    const entry = inputs.get(chatId);
+    if (isOld(entry)) {
+      clearInput(chatId);
+      return false;
     }
-    if (!offers.length) return send(chatId, 'Teklif bulunamadı.');
-    const lines = [`🏷 <b>Teklifler</b> (${total} kayıt, ilk ${offers.length})`, ''];
-    for (const o of offers) lines.push(formatOffer(o));
-    await send(chatId, lines.join('\n'));
-  }
-
-  async function cmdFiyat(chatId, ref, amount) {
-    const offer = await resolveOffer(ref);
-    if (!offer) return send(chatId, `Teklif bulunamadı: <code>${esc(ref)}</code>\nÖnce /teklifler ile listeye bak.`);
-    const value = Number(String(amount).replace(',', '.'));
-    if (!Number.isFinite(value) || value <= 0) return send(chatId, 'Geçerli bir tutar yaz. Örnek: /fiyat 468632 1.25');
-    await api.setOfferPrice(offer.id, value);
-    await send(chatId, `✅ Fiyat güncellendi.\n<b>${esc(offer.offerTitle ?? '')}</b>\nYeni fiyat: <b>${money({ amount: value, currency: 'USD' })}</b>`);
-  }
-
-  async function cmdStok(chatId, ref, qty) {
-    const offer = await resolveOffer(ref);
-    if (!offer) return send(chatId, `Teklif bulunamadı: <code>${esc(ref)}</code>`);
-    const value = Number(qty);
-    if (!Number.isInteger(value) || value < 0) return send(chatId, 'Geçerli bir adet yaz. Örnek: /stok 468632 5');
-    await api.setOfferQuantity(offer.id, value);
-    await send(chatId, `✅ Adet güncellendi.\n<b>${esc(offer.offerTitle ?? '')}</b> → <b>${value}</b>`);
-  }
-
-  async function cmdDurumDegistir(chatId, ref, action) {
-    const offer = await resolveOffer(ref);
-    if (!offer) return send(chatId, `Teklif bulunamadı: <code>${esc(ref)}</code>`);
-    if (action === 'pause') await api.pauseOffer(offer.id);
-    else await api.resumeOffer(offer.id);
-    await send(chatId, `${action === 'pause' ? '⏸ Duraklatıldı' : '▶️ Devam ettirildi'}.\n<b>${esc(offer.offerTitle ?? '')}</b>`);
-  }
-
-  async function cmdTeslim(chatId, ref, text) {
-    const order = await resolveOrder(ref);
-    if (!order) return send(chatId, `Sipariş bulunamadı: <code>${esc(ref)}</code>`);
-    if (!text) return send(chatId, 'Teslim metni gerekli.\nÖrnek: /teslim 4f3ff5 <code>mail:sifre</code>');
-    await api.deliverOrder(order.id, text);
-    await send(chatId, `✅ Teslim edildi olarak işaretlendi.\nSipariş: <code>${esc(shortId(order.id))}</code>`);
-  }
-
-  async function cmdOto(chatId, args) {
-    const sub = (args[0] || '').toLowerCase();
-    if (sub === 'on' || sub === 'off') {
-      store.set('autoDeliver', sub === 'on');
-      return send(
-        chatId,
-        sub === 'on'
-          ? '✅ Otomatik teslimat açık. Metin tanımlanmış tekliflerde "Paid" sipariş gelince bot teslim eder.\nMetin ekle: /oto metin &lt;teklifNo&gt; &lt;metin&gt;'
-          : '⛔ Otomatik teslimat kapalı.',
-      );
+    const value = text.trim();
+    try {
+      if (entry.type === 'price') {
+        const amount = Number(value.replace(',', '.'));
+        if (!Number.isFinite(amount) || amount <= 0) return send(chatId, '⚠️ Geçerli bir sayı yaz. Örnek: <code>1.25</code>'), true;
+        await api.setOfferPrice(entry.id, amount);
+        clearInput(chatId);
+        await send(chatId, `✅ Fiyat güncellendi: <b>${money({ amount, currency: 'USD' })}</b>`);
+        await render(chatId, await offerView(entry.id));
+        return true;
+      }
+      if (entry.type === 'qty') {
+        const qty = Number(value);
+        if (!Number.isInteger(qty) || qty < 0) return send(chatId, '⚠️ Geçerli bir tam sayı yaz. Örnek: <code>25</code>'), true;
+        await api.setOfferQuantity(entry.id, qty);
+        clearInput(chatId);
+        await send(chatId, `✅ Adet güncellendi: <b>${qty}</b>`);
+        await render(chatId, await offerView(entry.id));
+        return true;
+      }
+      if (entry.type === 'autoText') {
+        const map = { ...(store.get('autoDeliveryTexts') || {}), [entry.id]: value };
+        store.set('autoDeliveryTexts', map);
+        clearInput(chatId);
+        await send(chatId, '✅ Otomatik teslim metni kaydedildi.');
+        await render(chatId, await offerView(entry.id));
+        return true;
+      }
+      if (entry.type === 'deliver') {
+        await api.deliverOrder(entry.id, value);
+        clearInput(chatId);
+        await send(chatId, `✅ Sipariş teslim edildi: <code>#${esc(shortId(entry.id))}</code>`);
+        return true;
+      }
+    } catch (err) {
+      clearInput(chatId);
+      await send(chatId, `❌ İşlem başarısız.\n<code>${esc(err.message)}</code>`);
+      return true;
     }
-    if (sub === 'liste') {
-      const map = store.get('autoDeliveryTexts') || {};
-      const entries = Object.entries(map);
-      if (!entries.length) return send(chatId, 'Kayıtlı otomatik teslim metni yok.');
-      return send(chatId, ['📝 <b>Otomatik teslim metinleri</b>', '', ...entries.map(([id, t]) => `<code>${esc(shortId(id))}</code> — ${esc(t.slice(0, 60))}`)].join('\n'));
+    return false;
+  }
+
+  // ---------------------------------------------------------------- yonlendirme
+
+  async function handleCallback(cq) {
+    const chatId = cq.message?.chat?.id;
+    const messageId = cq.message?.message_id;
+    const data = String(cq.data || '');
+    if (!chatId || !data) return;
+    const [ns, action, arg] = data.split(':');
+    Promise.resolve(tg.answerCallback(cq.id)).catch(() => null);
+
+    try {
+      switch (`${ns}:${action}`) {
+        case 'dash:open':
+          return render(chatId, ui.mainMenu(store), { messageId });
+        case 'dash:refresh':
+          return render(chatId, await dashboardView(), { messageId });
+        case 'ord:list':
+          return render(chatId, await ordersView(Number(arg) || 0), { messageId });
+        case 'ord:pending':
+          return render(chatId, await pendingView(), { messageId });
+        case 'ord:one':
+          return render(chatId, await orderView(arg), { messageId });
+        case 'ord:deliver':
+          return askInput(chatId, 'deliver', arg, { messageId });
+        case 'off:list':
+          return render(chatId, await offersView(Number(arg) || 0), { messageId });
+        case 'off:one':
+          return render(chatId, await offerView(arg), { messageId });
+        case 'off:price':
+          return askInput(chatId, 'price', arg, { messageId });
+        case 'off:qty':
+          return askInput(chatId, 'qty', arg, { messageId });
+        case 'off:auto':
+          return askInput(chatId, 'autoText', arg, { messageId });
+        case 'off:pause':
+        case 'off:resume': {
+          const offer = await findOffer(arg);
+          if (!offer) return render(chatId, { text: '❌ Teklif bulunamadı.', keyboard: [[{ text: '◀️ Teklifler', callback_data: 'off:list:0' }]] }, { messageId });
+          if (action === 'pause') await api.pauseOffer(offer.id);
+          else await api.resumeOffer(offer.id);
+          Promise.resolve(tg.answerCallback(cq.id, action === 'pause' ? 'Duraklatıldı' : 'Devam ettirildi')).catch(() => null);
+          return render(chatId, await offerView(offer.id), { messageId });
+        }
+        case 'set:open':
+          return render(chatId, ui.settings(store), { messageId });
+        case 'set:toggleMonitor': {
+          const next = !store.get('monitor');
+          store.set('monitor', next);
+          if (next) monitor.start();
+          return render(chatId, ui.settings(store), { messageId });
+        }
+        case 'set:toggleAuto':
+          store.set('autoDeliver', !store.get('autoDeliver'));
+          return render(chatId, ui.settings(store), { messageId });
+        case 'set:test': {
+          return send(
+            chatId,
+            [
+              '🔔 <b>TEST BİLDİRİMİ</b>',
+              '─────────────────',
+              'Bu bir deneme mesajıdır — <b>gerçek sipariş değildir</b>.',
+              'Gerçek sipariş geldiğinde bunun gibi bir kart alacaksın.',
+              '',
+              '<i>Bildirimler çalışıyor.</i>',
+            ].join('\n'),
+          );
+        }
+        case 'help:open':
+          return render(chatId, ui.helpText(), { messageId });
+        default:
+          return null;
+      }
+    } catch (err) {
+      log('[bot] callback hatasi:', err.message);
+      await send(chatId, `❌ Hata: <code>${esc(err.message)}</code>`);
     }
-    if (sub === 'metin') {
-      const [, ref, ...rest] = args;
-      const text = rest.join(' ');
-      if (!ref || !text) return send(chatId, 'Kullanım: /oto metin &lt;teklifNo&gt; &lt;metin&gt;');
-      const offer = await resolveOffer(ref);
-      const id = offer?.id ?? ref;
-      const map = { ...(store.get('autoDeliveryTexts') || {}), [id]: text };
-      store.set('autoDeliveryTexts', map);
-      return send(chatId, `✅ Metin kaydedildi: <code>${esc(shortId(id))}</code>\n${esc(text.slice(0, 120))}`);
-    }
-    return send(chatId, 'Kullanım: /oto on | /oto off | /oto metin &lt;teklifNo&gt; &lt;metin&gt; | /oto liste');
+    return null;
   }
 
   async function handleMessage(msg) {
     const chatId = msg.chat?.id;
     const text = (msg.text || '').trim();
-    if (!chatId || !text.startsWith('/')) return;
+    if (!chatId || !text) return;
 
-    const [rawCmd, ...args] = text.split(/\s+/);
-    const cmd = rawCmd.replace(/@\w+$/, '').toLowerCase();
-
-    // Sohbet kimligini kaydet (ilk mesaj atan kisi botun sahibi kabul edilir).
     if (store.get('chatId') !== chatId) {
       store.set('chatId', chatId);
       log(`[bot] chat id kaydedildi: ${chatId}`);
     }
 
+    // Butonla baslatilan giris akisi (komut degilse)
+    if (!text.startsWith('/')) {
+      if (await handleInput(chatId, text)) return;
+      return;
+    }
+
+    const [rawCmd, ...args] = text.split(/\s+/);
+    const cmd = rawCmd.replace(/@\w+$/, '').toLowerCase();
+
+    if (cmd === '/iptal') {
+      clearInput(chatId);
+      return send(chatId, '↩️ İptal edildi.');
+    }
+
     try {
       switch (cmd) {
-        case '/start':
+        case '/start': {
+          const menu = ui.mainMenu(store);
+          return send(chatId, menu.text, { keyboard: menu.keyboard });
+        }
+
+        case '/panel':
+        case '/durum':
+          return render(chatId, await dashboardView());
+        case '/siparisler':
+          return render(chatId, await ordersView(0));
+        case '/bekleyen':
+          return render(chatId, await pendingView());
+        case '/teklifler':
+          return render(chatId, await offersView(0));
+        case '/ayarlar':
+          return render(chatId, ui.settings(store));
         case '/yardim':
         case '/help':
-          await send(chatId, HELP);
-          if (cmd === '/start') await cmdDurum(chatId);
-          break;
+          return render(chatId, ui.helpText());
         case '/id':
-          await send(chatId, `Chat ID: <code>${esc(chatId)}</code>`);
-          break;
-        case '/durum':
-          await cmdDurum(chatId);
-          break;
-        case '/ozet':
-          await cmdOzet(chatId);
-          break;
-        case '/siparisler':
-          await cmdSiparisler(chatId);
-          break;
-        case '/bekleyen':
-          await cmdBekleyen(chatId);
-          break;
-        case '/teklifler':
-          await cmdTeklifler(chatId, args.join(' ').trim());
-          break;
-        case '/fiyat':
-          if (args.length < 2) await send(chatId, 'Kullanım: /fiyat &lt;teklifNo&gt; &lt;tutar&gt;');
-          else await cmdFiyat(chatId, args[0], args[1]);
-          break;
-        case '/stok':
-          if (args.length < 2) await send(chatId, 'Kullanım: /stok &lt;teklifNo&gt; &lt;adet&gt;');
-          else await cmdStok(chatId, args[0], args[1]);
-          break;
-        case '/duraklat':
-          if (!args[0]) await send(chatId, 'Kullanım: /duraklat &lt;teklifNo&gt;');
-          else await cmdDurumDegistir(chatId, args[0], 'pause');
-          break;
-        case '/devam':
-          if (!args[0]) await send(chatId, 'Kullanım: /devam &lt;teklifNo&gt;');
-          else await cmdDurumDegistir(chatId, args[0], 'resume');
-          break;
-        case '/teslim':
-          await cmdTeslim(chatId, args[0], args.slice(1).join(' '));
-          break;
+          return send(chatId, `Chat ID: <code>${esc(chatId)}</code>`);
+
+        // Komut kisayollari (menude olmayanlar)
+        case '/fiyat': {
+          if (args.length < 2) return send(chatId, 'Kullanım: /fiyat &lt;teklifNo&gt; &lt;tutar&gt;');
+          const offer = await findOffer(args[0]);
+          if (!offer) return send(chatId, `❌ Teklif bulunamadı: <code>${esc(args[0])}</code>`);
+          const amount = Number(args[1].replace(',', '.'));
+          if (!Number.isFinite(amount) || amount <= 0) return send(chatId, '⚠️ Geçerli bir tutar yaz. Örnek: /fiyat 468632 1.25');
+          await api.setOfferPrice(offer.id, amount);
+          clearInput(chatId);
+          return send(chatId, `✅ <b>${esc(offer.offerTitle ?? '')}</b>\nYeni fiyat: <b>${money({ amount, currency: 'USD' })}</b>`);
+        }
+        case '/stok': {
+          if (args.length < 2) return send(chatId, 'Kullanım: /stok &lt;teklifNo&gt; &lt;adet&gt;');
+          const offer = await findOffer(args[0]);
+          if (!offer) return send(chatId, `❌ Teklif bulunamadı: <code>${esc(args[0])}</code>`);
+          const qty = Number(args[1]);
+          if (!Number.isInteger(qty) || qty < 0) return send(chatId, '⚠️ Geçerli bir tam sayı yaz. Örnek: /stok 468632 5');
+          await api.setOfferQuantity(offer.id, qty);
+          clearInput(chatId);
+          return send(chatId, `✅ <b>${esc(offer.offerTitle ?? '')}</b>\nYeni adet: <b>${qty}</b>`);
+        }
+        case '/teslim': {
+          if (!args[0]) return send(chatId, 'Kullanım: /teslim &lt;siparişNo&gt; &lt;metin&gt;');
+          const order = await findOrder(args[0]);
+          if (!order) return send(chatId, `❌ Sipariş bulunamadı: <code>${esc(args[0])}</code>`);
+          const detail = args.slice(1).join(' ');
+          if (!detail) {
+            setInput(chatId, { type: 'deliver', id: order.id });
+            return send(chatId, PROMPTS.deliver(order));
+          }
+          await api.deliverOrder(order.id, detail);
+          clearInput(chatId);
+          return send(chatId, `✅ Sipariş teslim edildi: <code>#${esc(shortId(order.id))}</code>`);
+        }
         case '/izle': {
           const sub = (args[0] || '').toLowerCase();
-          if (sub === 'on' || sub === 'off') {
-            store.set('monitor', sub === 'on');
-            if (sub === 'on') monitor.start();
-            await send(chatId, sub === 'on' ? '✅ Sipariş bildirimleri açık.' : '⛔ Sipariş bildirimleri kapalı.');
-          } else {
-            await send(chatId, 'Kullanım: /izle on | /izle off');
-          }
-          break;
+          if (sub !== 'on' && sub !== 'off') return send(chatId, 'Kullanım: /izle on | /izle off');
+          store.set('monitor', sub === 'on');
+          if (sub === 'on') monitor.start();
+          return send(chatId, sub === 'on' ? '✅ Sipariş bildirimleri açık.' : '⛔ Sipariş bildirimleri kapalı.');
         }
-        case '/oto':
-          await cmdOto(chatId, args);
-          break;
+        case '/oto': {
+          const sub = (args[0] || '').toLowerCase();
+          if (sub !== 'on' && sub !== 'off') return send(chatId, 'Kullanım: /oto on | /oto off');
+          store.set('autoDeliver', sub === 'on');
+          return send(chatId, sub === 'on' ? '✅ Otomatik teslimat açık.' : '⛔ Otomatik teslimat kapalı.');
+        }
         default:
-          await send(chatId, `Bilinmeyen komut: ${esc(cmd)}\n/yardim yaz.`);
+          return send(chatId, `Bilinmeyen komut: <code>${esc(cmd)}</code>\n/menu için /start`);
       }
     } catch (err) {
       log(`[bot] ${cmd} hatasi:`, err.message);
       await send(chatId, `❌ Hata: <code>${esc(err.message)}</code>`);
     }
+    return null;
   }
 
-  return { handleMessage, send, resolveOffer, resolveOrder };
+  return { handleMessage, handleCallback, send };
 }

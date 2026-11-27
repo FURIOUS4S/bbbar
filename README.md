@@ -32,25 +32,50 @@ POLL_SECONDS=45
 
 > Node.js 20 veya üzeri gerekir. Ek paket kurulumu yoktur (`npm install` gerekmez).
 
-## Komutlar
+## Kullanım
+
+Her şey **butonlarla** yapılır — komut ezberlemek gerekmez. `/start` yaz, menü gelir.
+
+```
+🛡 ELDORADO SATICI PANELİ
+─────────────────
+[📊 Panel]      [🛒 Siparişler]
+[🏷 Teklifler]  [⚙️ Ayarlar]
+[❓ Yardım]
+```
+
+- **Panel** — puan, bugünün cirosu, sipariş durum dağılımı, bekleyen tutar, izleme durumu.
+- **Siparişler** — sayfalı liste; her siparişe dokununca detay kartı ve **✅ Teslim Et** butonu.
+- **Teklifler** — sayfalı liste; her teklifte **💰 Fiyat**, **📦 Stok**, **⏸ Duraklat**, **🤖 Oto Metin**.
+- **Ayarlar** — bildirim aç/kapat, otomatik teslimat aç/kapat, test bildirimi.
+
+Yeni sipariş geldiğinde butonlu bir kart düşer:
+
+```
+🛒 YENİ SİPARİŞ
+─────────────────
+Fresh USA PSN Account | Full Access
+Alıcı: BoldGust-DGRo
+Tutar: $0.05 · 1 adet
+Durum: Teslim edildi
+─────────────────
+[👁 Detay]
+```
+
+### Komutlar (kısayol)
 
 | Komut | Açıklama |
 |---|---|
-| `/durum` | Bağlantı, puan, bekleyen sipariş özeti |
-| `/ozet` | Sipariş durum sayıları |
-| `/siparisler` | Son 10 sipariş |
+| `/panel` | Gösterge paneli |
+| `/siparisler` | Siparişler (sayfalı) |
 | `/bekleyen` | Teslim/itiraz bekleyen siparişler |
-| `/teklifler [arama]` | Teklifleri listele |
-| `/fiyat <teklifNo> <tutar>` | Teklif fiyatını değiştir |
-| `/stok <teklifNo> <adet>` | Teklif adedini değiştir |
-| `/duraklat <teklifNo>` | Teklifi duraklat |
-| `/devam <teklifNo>` | Teklifi devam ettir |
+| `/teklifler` | Teklifler (sayfalı) |
+| `/ayarlar` | Bildirim / otomatik teslimat |
+| `/fiyat <teklifNo> <tutar>` | Fiyat değiştir |
+| `/stok <teklifNo> <adet>` | Adet değiştir |
 | `/teslim <siparişNo> <metin>` | Siparişi teslim et |
-| `/izle on\|off` | Sipariş bildirimlerini aç/kapat |
-| `/oto on\|off` | Otomatik teslimatı aç/kapat |
-| `/oto metin <teklifNo> <metin>` | Teklif için otomatik teslim metni |
-| `/oto liste` | Kayıtlı metinler |
-| `/yardim` | Komut listesi |
+| `/izle on\|off` · `/oto on\|off` | Hızlı aç/kapat |
+| `/iptal` | Yarım kalan girişi iptal et |
 
 Teklif/sipariş numarası olarak listede görünen kısa kodun ilk birkaç karakteri yeterlidir.
 
