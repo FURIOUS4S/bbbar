@@ -1,13 +1,15 @@
 name: keepalive
 
-# Render ücretsiz planı 15 dk trafik almazsa uyur. Bu iş her 10 dakikada
+# Render ücretsiz planı 15 dk trafik almazsa uyur. Bu iş her 5 dakikada
 # sağlık ucunu yoklar; böylece bot 7/24 uyanık kalır.
-# Kurulum: repo → Settings → Secrets and variables → Actions → Variables →
-#          New repository variable → Name: RENDER_URL, Value: https://....onrender.com
+#
+# Adres iki yerden okunur: önce repo değişkeni RENDER_URL (Settings → Secrets and
+# variables → Actions → Variables), yoksa aşağıdaki varsayılan adres kullanılır.
+# Adres değişirse buradaki varsayılanı güncelle ya da RENDER_URL değişkenini tanımla.
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions: {}
@@ -19,11 +21,10 @@ jobs:
     steps:
       - name: Saglik ucunu yokla
         env:
-          RENDER_URL: ${{ vars.RENDER_URL }}
+          RENDER_URL: ${{ vars.RENDER_URL || 'https://eldorado-telegram-bot.onrender.com' }}
         run: |
           if [ -z "$RENDER_URL" ]; then
             echo "RENDER_URL tanimli degil; atlandi."
-            echo "Repo Settings > Secrets and variables > Actions > Variables altina ekleyin."
             exit 0
           fi
           url="${RENDER_URL%/}/health"

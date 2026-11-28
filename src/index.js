@@ -93,6 +93,7 @@ async function main() {
             ok: true,
             uptimeSec: Math.round(process.uptime()),
             monitor: store.get('monitor'),
+            chatConfigured: Boolean(store.get('chatId')),
             lastOrderAt: store.get('lastOrderAt'),
             now: new Date().toISOString(),
           }),
