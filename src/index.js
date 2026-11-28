@@ -107,6 +107,18 @@ async function main() {
     health.listen(Number(process.env.PORT), '0.0.0.0', () =>
       log(`[server] saglik ucu dinleniyor (port ${process.env.PORT})`),
     );
+
+    // Render ucretsiz plan: disaridan istek gelmezse 15 dk sonra uykuya gecer.
+    // Kendi saglik ucumuza periyodik istek atarak uyanik kal (RENDER_EXTERNAL_URL
+    // Render tarafindan otomatik verilir).
+    if (process.env.RENDER_EXTERNAL_URL) {
+      const selfUrl = `${process.env.RENDER_EXTERNAL_URL.replace(/\/+$/, '')}/health`;
+      setInterval(
+        () => fetch(selfUrl, { signal: AbortSignal.timeout(15_000) }).catch(() => {}),
+        5 * 60 * 1000,
+      ).unref?.();
+      log(`[server] kendini uyanik tutma acik: ${selfUrl} (5 dk)`);
+    }
   }
 
   const api = new Eldorado({ clientId, clientSecret, log: (...a) => log('[api]', ...a) });
