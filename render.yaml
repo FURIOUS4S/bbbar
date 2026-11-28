@@ -1,7 +1,9 @@
 # Render.com Blueprint — Eldorado Telegram botu
 #
-# Ücretsiz plan: 15 dk gelen istek olmazsa uykuya geçer. Bu yüzden repodaki
-# .github/workflows/keepalive.yml her 10 dakikada /health adresine istek atar.
+# Ücretsiz plan: 15 dk gelen istek olmazsa uykuya geçer. Bot, RENDER_EXTERNAL_URL
+# varsa kendi /health ucunu 5 dk'da bir yoklar (birincil). .github/workflows/
+# keepalive.yml aynı işi dışarıdan yapar (yedek; GitHub 60+ gün hareketsizlikte
+# zamanlanmış işleri kapatabilir).
 # Kalıcı disk yok: yeniden başlatmada data/state.json sıfırlanır, bot mevcut
 # siparişleri "görülmüş" sayıp devam eder (bildirim yağmuru olmaz).
 services:

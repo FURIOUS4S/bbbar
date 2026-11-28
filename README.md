@@ -39,9 +39,14 @@ POLL_SECONDS=45
 ## 7/24 çalıştırma (Render.com — ücretsiz plan)
 
 PC kapalıyken de bildirim gelsin istiyorsan botu Render'a koy. Ücretsiz plan 15 dk
-gelen istek olmazsa uykuya geçtiği için repodaki GitHub Actions işi
-(`.github/workflows/keepalive.yml`) **10 dakikada bir** `/health` ucunu yoklar ve
-botu uyanık tutar.
+gelen istek olmazsa uykuya geçer; bot bunu iki şekilde engeller:
+
+- **Kendi kendini uyanık tutma (birincil):** süreç, Render'ın verdiği
+  `RENDER_EXTERNAL_URL` adresine **5 dakikada bir** `/health` isteği atar.
+- **GitHub Actions yedeği:** `.github/workflows/keepalive.yml` de 5 dakikada bir aynı
+  ucu dışarıdan yoklar. Not: repo 60+ gün hareketsiz kaldıysa GitHub zamanlanmış
+  işleri kapatır; Actions sekmesinden yeniden etkinleştirmek gerekebilir (bu repoda
+  zamanlayıcı hiç tetiklenmedi — birincil mekanizma bu yüzden var).
 
 1. Depoyu GitHub'a gönder (`FURIOUS4S/bbbar`).
 2. Render → **New → Blueprint** → depoyu seç → `render.yaml` otomatik okunur → **Apply**.
