@@ -1,0 +1,31 @@
+# Render.com Blueprint — Eldorado Telegram botu
+#
+# Ücretsiz plan: 15 dk gelen istek olmazsa uykuya geçer. Bu yüzden repodaki
+# .github/workflows/keepalive.yml her 10 dakikada /health adresine istek atar.
+# Kalıcı disk yok: yeniden başlatmada data/state.json sıfırlanır, bot mevcut
+# siparişleri "görülmüş" sayıp devam eder (bildirim yağmuru olmaz).
+services:
+  - type: web
+    name: eldorado-telegram-bot
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: node -v
+    startCommand: node src/index.js
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: POLL_SECONDS
+        value: "20"
+      # Gizli değerler: Render panelinde siz girersiniz (sync: false).
+      - key: ELDORADO_CLIENT_ID
+        sync: false
+      - key: ELDORADO_CLIENT_SECRET
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      # Kalıcı disk olmadığı için chat id ortam değişkeninde dursun.
+      - key: TELEGRAM_CHAT_ID
+        sync: false

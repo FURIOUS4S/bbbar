@@ -1,5 +1,6 @@
 // Giris noktasi.
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,8 +15,34 @@ import { createBot } from './bot.js';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 loadEnv(ROOT);
 
-const stamp = () => new Date().toISOString().slice(11, 19);
-const log = (...args) => console.log(`[${stamp()}]`, ...args);
+const LOG_FILE = path.join(ROOT, 'data', 'bot.log');
+const LOG_MAX_BYTES = 2 * 1024 * 1024;
+
+/** Konsola yazar ve ayni satiri data/bot.log'a ekler (bot neden durdu hep gorulebilsin). */
+function log(...args) {
+  const text = args
+    .map((a) => (typeof a === 'string' ? a : a instanceof Error ? (a.stack ?? a.message) : JSON.stringify(a)))
+    .join(' ');
+  const line = `[${new Date().toISOString().slice(11, 19)}] ${text}`;
+  console.log(line);
+  try {
+    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+    try {
+      if (fs.statSync(LOG_FILE).size > LOG_MAX_BYTES) fs.renameSync(LOG_FILE, `${LOG_FILE}.1`);
+    } catch {
+      /* dosya henuz yok */
+    }
+    fs.appendFileSync(LOG_FILE, `${line}\n`);
+  } catch {
+    /* log yazilamazsa bot calismaya devam etsin */
+  }
+}
+
+process.on('unhandledRejection', (err) => log('[hata] islenmeyen promise reddi:', err?.message ?? err));
+process.on('uncaughtException', (err) => {
+  log('[hata] yakalanmayan istisna:', err?.stack ?? err);
+  process.exit(1);
+});
 
 function acquireLock(port) {
   return new Promise((resolve, reject) => {
@@ -54,6 +81,32 @@ async function main() {
   if (envBool('AUTO_DELIVER', false)) store.set('autoDeliver', true);
 
   store.set('pollSeconds', Math.max(20, pollSeconds));
+
+  // Render/Railway gibi platformlar PORT ister: saglik ucu (sir icermez).
+  let health = null;
+  if (process.env.PORT) {
+    health = http.createServer((req, res) => {
+      if (req.url === '/' || req.url.startsWith('/health')) {
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(
+          JSON.stringify({
+            ok: true,
+            uptimeSec: Math.round(process.uptime()),
+            monitor: store.get('monitor'),
+            lastOrderAt: store.get('lastOrderAt'),
+            now: new Date().toISOString(),
+          }),
+        );
+        return;
+      }
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('not found');
+    });
+    health.on('error', (err) => log('[server] saglik ucu hatasi:', err.message));
+    health.listen(Number(process.env.PORT), '0.0.0.0', () =>
+      log(`[server] saglik ucu dinleniyor (port ${process.env.PORT})`),
+    );
+  }
 
   const api = new Eldorado({ clientId, clientSecret, log: (...a) => log('[api]', ...a) });
   const tg = new Telegram(botToken, { log: (...a) => log(...a) });
@@ -100,6 +153,7 @@ async function main() {
     monitor.stop();
     tg.stop();
     store.save();
+    health?.close();
     lock.close();
     setTimeout(() => process.exit(0), 300);
   };

@@ -1,6 +1,6 @@
 // Tum ekranlarin tasarimi. Bot mantigi yok, sadece gorunum.
 import { esc } from './telegram.js';
-import { money, shortId, stateLabel, when } from './format.js';
+import { money, shortId, stateLabel, when, STATE_TR } from './format.js';
 import { OFFER_TYPES } from './offers.js';
 
 export const STATE_ICON = {
@@ -453,4 +453,44 @@ export function orderAlert(o, { autoNote = null } = {}) {
     text: lines.join('\n'),
     keyboard: [[{ text: '👁 Detay', callback_data: `ord:one:${shortId(o.id)}` }]],
   };
+}
+
+/**
+ * Bot kapaliyken gelen siparisler icin tek kartlik ozet.
+ * Tek tek bildirim yagmuru yerine bir kez gonderilir.
+ */
+export function missedSummary(orders, { delivered = 0 } = {}) {
+  const counts = new Map();
+  for (const o of orders) {
+    const st = o.state?.state ?? 'Bilinmeyen';
+    counts.set(st, (counts.get(st) ?? 0) + 1);
+  }
+  const total = orders.reduce((sum, o) => sum + Number(o.totalPrice?.amount ?? 0), 0);
+  const currency = orders[0]?.totalPrice?.currency ?? 'USD';
+  const sorted = [...orders].sort(
+    (a, b) => new Date(b.state?.createdDate ?? b.createdDate ?? 0) - new Date(a.state?.createdDate ?? a.createdDate ?? 0),
+  );
+  const lines = [
+    '📥 <b>BOT KAPALIYKEN GELEN SİPARİŞLER</b>',
+    LINE,
+    `Toplam: <b>${orders.length}</b> sipariş · <b>${money({ amount: total, currency })}</b>`,
+    [...counts.entries()].map(([st, n]) => `${icon(st)} ${esc(STATE_TR[st] || st)}: <b>${n}</b>`).join('\n'),
+  ];
+  if (delivered) lines.push(`🤖 Otomatik teslimat: <b>${delivered}</b> sipariş`);
+  lines.push(
+    '',
+    `Son sipariş: ${esc(when(sorted[0]?.state?.createdDate ?? sorted[0]?.createdDate))}`,
+    '<i>Bildirim yağmuru olmasın diye tek özet gönderildi.</i>',
+  );
+  const keyboard = sorted.slice(0, 5).map((o) => [
+    {
+      text: `${icon(o.state?.state)} #${shortId(o.id)} · ${money(o.totalPrice)}`,
+      callback_data: `ord:one:${shortId(o.id)}`,
+    },
+  ]);
+  keyboard.push([
+    { text: '🛒 Tüm siparişler', callback_data: 'ord:list:all:0' },
+    { text: '◀️ Menü', callback_data: 'menu:open' },
+  ]);
+  return { text: lines.join('\n'), keyboard };
 }

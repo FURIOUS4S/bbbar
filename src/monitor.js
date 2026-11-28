@@ -1,8 +1,10 @@
 // Siparis izleyici: yeni siparisi yakalar, Telegram'a bildirir, gerekirse teslim eder.
 import { orderTitle, shortId } from './format.js';
-import { orderAlert } from './ui.js';
+import { orderAlert, missedSummary } from './ui.js';
 
 const PENDING_STATES = new Set(['Paid']);
+// Bot kapaliyken bu sayidan fazla siparis biriktiyse tek ozet gonderilir.
+const CATCHUP_LIMIT = 3;
 
 export class Monitor {
   constructor({ api, store, notify, log = console.log, pollSeconds = 45 }) {
@@ -14,6 +16,7 @@ export class Monitor {
     this.timer = null;
     this.busy = false;
     this.failures = 0;
+    this.firstTick = true; // surec basladiktan sonraki ilk kontrol
   }
 
   start() {
@@ -27,6 +30,32 @@ export class Monitor {
   stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+  }
+
+  /** Odeme bekleyen siparisi, teklif icin metin tanimliysa teslim eder. */
+  async autoDeliver(order) {
+    if (!PENDING_STATES.has(order.state?.state)) return null;
+    if (!this.store.get('autoDeliver')) return null;
+    const text = this.store.get('autoDeliveryTexts')?.[order.offerId];
+    if (!text) return null;
+    try {
+      await this.api.deliverOrder(order.id, text);
+      this.log(`[monitor] otomatik teslimat OK ${shortId(order.id)}`);
+      return '✅ Otomatik teslimat yapıldı.';
+    } catch (err) {
+      this.log(`[monitor] otomatik teslimat HATA ${shortId(order.id)}: ${err.message}`);
+      return `⚠️ Otomatik teslimat başarısız: ${err.message}`;
+    }
+  }
+
+  async sendAlert(chatId, order, autoNote = null) {
+    if (!chatId) return; // henuz /start yapilmamis
+    try {
+      const view = orderAlert(order, { autoNote });
+      await this.notify(chatId, view.text, { keyboard: view.keyboard });
+    } catch (err) {
+      this.log('[monitor] bildirim gonderilemedi:', err.message);
+    }
   }
 
   async tick() {
@@ -43,40 +72,42 @@ export class Monitor {
       if (!baseline) {
         for (const order of orders) this.store.markSeen(order.id);
         this.store.set('baselineSet', true);
+        this.firstTick = false;
         this.log(`[monitor] baslangic: ${orders.length} mevcut siparis kaydedildi, yeni siparisler bildirilecek.`);
         return;
       }
 
       const fresh = orders.filter((o) => !this.store.hasSeen(o.id)).reverse(); // eskiden yeniye
+
+      // Uzun sure kapali kaldiysa: tek ozet gonder, 20 ayri bildirim yagmuru olmasin.
+      if (this.firstTick && fresh.length > CATCHUP_LIMIT) {
+        this.firstTick = false;
+        let delivered = 0;
+        for (const order of fresh) {
+          this.store.markSeen(order.id);
+          if (await this.autoDeliver(order)) delivered += 1;
+        }
+        this.store.set('lastOrderAt', new Date().toISOString());
+        this.log(`[monitor] bot kapaliyken ${fresh.length} siparis gelmis (${delivered} oto teslim); ozet gonderiliyor.`);
+        if (chatId) {
+          try {
+            const view = missedSummary(fresh, { delivered });
+            await this.notify(chatId, view.text, { keyboard: view.keyboard });
+          } catch (err) {
+            this.log('[monitor] ozet gonderilemedi:', err.message);
+          }
+        }
+        return;
+      }
+      this.firstTick = false;
+
       for (const order of fresh) {
         this.store.markSeen(order.id);
         this.store.set('lastOrderAt', new Date().toISOString());
         this.log(`[monitor] yeni siparis ${shortId(order.id)} | ${orderTitle(order)} | ${order.state?.state}`);
 
-        // Otomatik teslimat
-        let autoNote = null;
-        const state = order.state?.state;
-        if (PENDING_STATES.has(state) && this.store.get('autoDeliver')) {
-          const text = this.store.get('autoDeliveryTexts')?.[order.offerId];
-          if (text) {
-            try {
-              await this.api.deliverOrder(order.id, text);
-              autoNote = '✅ Otomatik teslimat yapıldı.';
-              this.log(`[monitor] otomatik teslimat OK ${shortId(order.id)}`);
-            } catch (err) {
-              autoNote = `⚠️ Otomatik teslimat başarısız: ${err.message}`;
-              this.log(`[monitor] otomatik teslimat HATA ${shortId(order.id)}: ${err.message}`);
-            }
-          }
-        }
-
-        if (!chatId) continue; // henuz /start yapilmamis
-        try {
-          const view = orderAlert(order, { autoNote });
-          await this.notify(chatId, view.text, { keyboard: view.keyboard });
-        } catch (err) {
-          this.log('[monitor] bildirim gonderilemedi:', err.message);
-        }
+        const autoNote = await this.autoDeliver(order);
+        await this.sendAlert(chatId, order, autoNote);
       }
     } catch (err) {
       this.failures += 1;

@@ -1,0 +1,40 @@
+name: keepalive
+
+# Render ücretsiz planı 15 dk trafik almazsa uyur. Bu iş her 10 dakikada
+# sağlık ucunu yoklar; böylece bot 7/24 uyanık kalır.
+# Kurulum: repo → Settings → Secrets and variables → Actions → Variables →
+#          New repository variable → Name: RENDER_URL, Value: https://....onrender.com
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Saglik ucunu yokla
+        env:
+          RENDER_URL: ${{ vars.RENDER_URL }}
+        run: |
+          if [ -z "$RENDER_URL" ]; then
+            echo "RENDER_URL tanimli degil; atlandi."
+            echo "Repo Settings > Secrets and variables > Actions > Variables altina ekleyin."
+            exit 0
+          fi
+          url="${RENDER_URL%/}/health"
+          for i in 1 2 3; do
+            if curl -fsS --max-time 25 "$url"; then
+              echo ""
+              echo "OK: $url"
+              exit 0
+            fi
+            echo "Deneme $i basarisiz (uykudan uyanma 1 dk surebilir), 20 sn sonra tekrar."
+            sleep 20
+          done
+          echo "Uyandirilamadi: $url"
+          exit 1
